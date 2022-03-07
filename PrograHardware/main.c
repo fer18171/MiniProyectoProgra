@@ -1,7 +1,8 @@
 /*
  *
  * Santiago Enrique Fernández Matheu 18171
- *
+ * Mini Proyecto
+ * Diseño e Innovación en Ingeniería 1
  *
  * timer_spi_master.c
  *
@@ -49,6 +50,13 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <stdarg.h>
+#include <stdbool.h>
+#include "inc/hw_sysctl.h"
+#include "inc/hw_i2c.h"
+#include "inc/hw_gpio.h"
 #include "inc/hw_ints.h"
 #include "inc/hw_memmap.h"
 #include "inc/hw_types.h"
@@ -63,30 +71,16 @@
 #include "driverlib/sysctl.h"
 #include "driverlib/timer.h"
 #include "driverlib/uart.h"
+#include "driverlib/i2c.h"
 #include "utils/uartstdio.h"
 
-//*********
-//
-//! \addtogroup ssi_examples_list
-//! <h1>SPI Master (spi_master)</h1> --- MODIFICADO
-//!
-//! This example shows how to configure the SSI0 as SPI Master.
-//!
-//! This example uses the following peripherals and I/O signals.  You must
-//! review these and change as needed for your own board:
-//! - SSI0 peripheral
-//! - GPIO Port A peripheral (for SSI0 pins)
-//! - SSI0Clk - PA2
-//! - SSI0Fss - PA3
-//! - SSI0Rx  - PA4
-//! - SSI0Tx  - PA5
-//!
-//! This example uses the following interrupt handlers.  To use this example
-//! in your own application you must add these interrupt handlers to your
-//! vector table.
-//! - Timer0IntHandler.
-//
-//*********
+#include <math.h>
+
+// Se agregan las nuevas librerias para i2c y para el mpu6050
+#include "hw_mpu6050.h"
+#include "i2cm_drv.h"
+#include "mpu6050.h"
+
 
 //*********
 // Definiciones para configuración del SPI
@@ -101,11 +95,10 @@ uint16_t i=0;
 
 
 // Se definen todas las varibles que se utilizaran para el programa
+
 //float kP=4.20;
 //float kI=252.40/frecuenciamuestreo;
 //float kD=0.017*frecuenciamuestreo;
-
-
 
 float Ref, y, u_k;
 
@@ -115,27 +108,18 @@ float u_k_1 = 0, u_k_2 = 0;
 uint16_t u_kint;
 //float u_k;
 
-// Definición de constantes para ecuaciones de diferencias para cada método
-//Tustin
-//const float b0=38.43, b1=-71.46, b2=33.22;
-//const float a1=0.1426, a2=-0.8574;
 
-//Backward euler
-//const float b0=21.34, b1=-39.79, b2=18.55;
-//const float a1=1.04, a2=-0.037;
+//****Variables para mpu6050****
 
-//zoh
-const float b0=501.9, b1=-1001, b2=499.1;
-const float a1=1.0, a2=-4.83e-12;
+// A boolean that is set when a MPU6050 command has completed.
+volatile bool g_bMPU6050Done;
 
-//zpm
-//const float b0=20.71, b1=-38.52, b2=17.91;
-//const float a1=1.0, a2=-4.83e-12;
+// I2C master instance
+tI2CMInstance g_sI2CMSimpleInst;
 
-//backard euler luis
-//const float b0=16.62, b1=-30.91, b2=14.37;
-//const float a1=1.042, a2=-0.04225;
-
+//Device frequency
+int clockFreq;
+//*******************************
 
 
 //*********
@@ -232,41 +216,176 @@ Timer0IntHandler(void)
 
 
 
-/*void
+void
 InitConsole(void)
 {
-    // Enable GPIO port A which is used for UART0 pins.
-    // TODO: change this to whichever GPIO port you are using.
     SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+        SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+        GPIOPinConfigure(GPIO_PA0_U0RX);
+        GPIOPinConfigure(GPIO_PA1_U0TX);
+        GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+        UARTClockSourceSet(UART0_BASE, UART_CLOCK_PIOSC);
+        UARTStdioConfig(0, 115200, 16000000);
 
-    // Configure the pin muxing for UART0 functions on port A0 and A1.
-    // This step is not necessary if your part does not support pin muxing.
-    // TODO: change this to select the port/pin you are using.
-    GPIOPinConfigure(GPIO_PA0_U0RX);
-    GPIOPinConfigure(GPIO_PA1_U0TX);
+}
 
-    // Enable UART0 so that we can configure the clock.
-    SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
+void InitI2C0(void)
+{
+    //enable I2C module 0
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_I2C0);
 
-    // Use the internal 16MHz oscillator as the UART clock source.
-    UARTClockSourceSet(UART0_BASE, UART_CLOCK_PIOSC);
+    //reset module
+    SysCtlPeripheralReset(SYSCTL_PERIPH_I2C0);
 
-    // Select the alternate (UART) function for these pins.
-    // TODO: change this to select the port/pin you are using.
-    GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
+    //enable GPIO peripheral that contains I2C 0
+    SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
 
-    // Initialize the UART for console I/O.
-    UARTStdioConfig(0, 115200, 16000000);
+    // Configure the pin muxing for I2C0 functions on port B2 and B3.
+    GPIOPinConfigure(GPIO_PB2_I2C0SCL);
+    GPIOPinConfigure(GPIO_PB3_I2C0SDA);
 
-}*/
+    // Select the I2C function for these pins.
+    GPIOPinTypeI2CSCL(GPIO_PORTB_BASE, GPIO_PIN_2);
+    GPIOPinTypeI2C(GPIO_PORTB_BASE, GPIO_PIN_3);
+
+    // Enable and initialize the I2C0 master module.  Use the system clock for
+    // the I2C0 module.
+    // I2C data transfer rate set to 400kbps.
+    I2CMasterInitExpClk(I2C0_BASE, SysCtlClockGet(), true);
+
+    //clear I2C FIFOs
+    HWREG(I2C0_BASE + I2C_O_FIFOCTL) = 80008000;
+
+    // Initialize the I2C master driver.
+    I2CMInit(&g_sI2CMSimpleInst, I2C0_BASE, INT_I2C0, 0xff, 0xff, SysCtlClockGet());
+
+}
+
+void delayMS(int ms) {
+    //ROM_SysCtlDelay( (ROM_SysCtlClockGet()/(3*1000))*ms ) ;  // more accurate
+    SysCtlDelay( (SysCtlClockGet()/(3*1000))*ms ) ;  // less accurate
+}
+
+//
+// The function that is provided by this example as a callback when MPU6050
+// transactions have completed.
+//
+void MPU6050Callback(void *pvCallbackData, uint_fast8_t ui8Status)
+{
+    //
+    // See if an error occurred.
+    //
+    if (ui8Status != I2CM_STATUS_SUCCESS)
+    {
+        //
+        // An error occurred, so handle it here if required.
+        //
+    }
+    //
+    // Indicate that the MPU6050 transaction has completed.
+    //
+    g_bMPU6050Done = true;
+}
+
+//
+// The interrupt handler for the I2C module.
+//
+void I2CMSimpleIntHandler(void)
+{
+    //
+    // Call the I2C master driver interrupt handler.
+    //
+    I2CMIntHandler(&g_sI2CMSimpleInst);
+}
+
+//
+// The MPU6050 example.
+//
+void MPU6050Example(void)
+{
+    float fAccel[3], fGyro[3];
+    tMPU6050 sMPU6050;
+    float x = 0, y = 0, z = 0;
+
+    //
+    // Initialize the MPU6050. This code assumes that the I2C master instance
+    // has already been initialized.
+    //
+    g_bMPU6050Done = false;
+    MPU6050Init(&sMPU6050, &g_sI2CMSimpleInst, 0x68, MPU6050Callback, &sMPU6050);
+    while (!g_bMPU6050Done)
+    {
+    }
+
+    //
+    // Configure the MPU6050 for +/- 4 g accelerometer range.
+    //
+    g_bMPU6050Done = false;
+    MPU6050ReadModifyWrite(&sMPU6050, MPU6050_O_ACCEL_CONFIG, ~MPU6050_ACCEL_CONFIG_AFS_SEL_M,
+        MPU6050_ACCEL_CONFIG_AFS_SEL_4G, MPU6050Callback, &sMPU6050);
+    while (!g_bMPU6050Done)
+    {
+    }
 
 
+    g_bMPU6050Done = false;
+    MPU6050ReadModifyWrite(&sMPU6050, MPU6050_O_PWR_MGMT_1, 0x00, 0b00000010 & MPU6050_PWR_MGMT_1_DEVICE_RESET, MPU6050Callback, &sMPU6050);
+    while (!g_bMPU6050Done)
+    {
+    }
+
+    g_bMPU6050Done = false;
+    MPU6050ReadModifyWrite(&sMPU6050, MPU6050_O_PWR_MGMT_2, 0x00, 0x00, MPU6050Callback, &sMPU6050);
+    while (!g_bMPU6050Done)
+    {
+    }
+
+    //
+    // Loop forever reading data from the MPU6050. Typically, this process
+    // would be done in the background, but for the purposes of this example,
+    // it is shown in an infinite loop.
+    //
+
+    while (1)
+    {
+        //
+        // Request another reading from the MPU6050.
+        //
+        g_bMPU6050Done = false;
+        MPU6050DataRead(&sMPU6050, MPU6050Callback, &sMPU6050);
+        while (!g_bMPU6050Done)
+        {
+        }
+        //
+        // Get the new accelerometer and gyroscope readings.
+        //
+        MPU6050DataAccelGetFloat(&sMPU6050, &fAccel[0], &fAccel[1],
+            &fAccel[2]);
+        MPU6050DataGyroGetFloat(&sMPU6050, &fGyro[0], &fGyro[1], &fGyro[2]);
+        //
+        // Do something with the new accelerometer and gyroscope readings.
+        //
+
+        //x = fGyro[0];
+        //y = fGyro[1];
+        z = fGyro[2];
+
+        x = (atan2(fAccel[0], sqrt (fAccel[1] * fAccel[1] + fAccel[2] * fAccel[2]))*180.0)/3.14;
+
+        y = (atan2(fAccel[1], sqrt (fAccel[0] * fAccel[0] + fAccel[2] * fAccel[2]))*180.0)/3.14;
+
+
+        UARTprintf("Ang. X: %d | Ang. Y: %d | Ang. Z: %d\n", (int)x, (int)y, (int)z);
+
+        //delayMS(100);
+    }
+}
 
 
 int
 main(void)
 
-+{
+{
     ///////////////////////////////////////////////////////////////
         uint32_t pui32residual[NUM_SPI_DATA];
         uint16_t freq_muestreo = 1000;    // En Hz
@@ -277,7 +396,7 @@ main(void)
                     SYSCTL_XTAL_16MHZ); // 80 MHz
 
 
-     //InitConsole();
+     InitConsole();
 
      // The ADC0 peripheral must be enabled for use.
      SysCtlPeripheralEnable(SYSCTL_PERIPH_ADC0);
@@ -397,9 +516,8 @@ main(void)
     while(SSIDataGetNonBlocking(SSI0_BASE, &pui32residual[0]))
     {
     }
+    InitI2C0();
+    MPU6050Example();
 
-
-    while(1)
-    {
-    }
+    return(0);
 }
