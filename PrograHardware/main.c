@@ -100,14 +100,17 @@ uint16_t i=0;
 //float kI=252.40/frecuenciamuestreo;
 //float kD=0.017*frecuenciamuestreo;
 
-float Ref, y, u_k;
+float Ref, u_k;
 
-float e_k_1 = 0, e_k_2 = 0;
-float u_k_1 = 0, u_k_2 = 0;
+float e_k_1 = 0, e_k = 0, E_k = 0;
+float kP=2 , kI=1, kD=0.001 ;
 
 uint16_t u_kint;
 //float u_k;
-
+uint16_t xAccel = 0, yAccel = 0, zAccel = 0, xGyro = 0, yGyro = 0, zGyro = 0;
+float xf = 0.0;
+uint8_t Mdata = 0;
+bool send_data = 0;
 
 //****Variables para mpu6050****
 
@@ -120,6 +123,12 @@ tI2CMInstance g_sI2CMSimpleInst;
 //Device frequency
 int clockFreq;
 //*******************************
+
+//************************************
+// PROTOTIPOS DE FUNCIONES
+//************************************
+void sendHL(uint16_t val);
+void Key(uint8_t a,uint8_t b);
 
 
 //*********
@@ -154,10 +163,12 @@ Timer0IntHandler(void)
 
       ADCSequenceDataGet(ADC0_BASE, 2, pui32ADC0Value);  // Notar el cambio de "secuencia".
 
-     Ref = pui32ADC0Value[1]*3.3/4095.0;  // Convertir a voltios
-       y = pui32ADC0Value[0]*3.3/4095.0;  // Convertir a voltios
 
-      u_k = control(Ref-y);
+      e_k = Ref-xf;
+      u_k = kP*e_k + kI*E_k + kD*(e_k-e_k_1);
+      E_k = E_k + e_k;
+      e_k_1 = e_k;
+
       u_k=u_k*(4095.0/3.3);
 
       if (u_k> 4095) // Se acota la salida para que se encuentre entre 0-4095
@@ -295,10 +306,10 @@ void I2CMSimpleIntHandler(void)
 //
 void MPU6050(void)
 {
-    uint16_t fAccel[3], fGyro[3];
+    uint16_t fAccelBruto[3], fGyroBruto[3];
+    float fAccelFloat[3], fGyroFloat[3];
     tMPU6050 sMPU6050;
-    uint16_t x = 0, y = 0, z = 0;
-    uint8_t xH = 0, yH = 0, zH = 0, xL = 0, yL = 0, zL = 0;
+
 
     //
     // Initialize the MPU6050. This code assumes that the I2C master instance
@@ -352,31 +363,40 @@ void MPU6050(void)
         //
         // Get the new accelerometer and gyroscope readings.
         //
-        MPU6050DataAccelGetRaw(&sMPU6050, &fAccel[0], &fAccel[1],
-            &fAccel[2]);
-        MPU6050DataGyroGetRaw(&sMPU6050, &fGyro[0], &fGyro[1], &fGyro[2]);
-        //
-        // Do something with the new accelerometer and gyroscope readings.
-        //
+        MPU6050DataAccelGetRaw(&sMPU6050, &fAccelBruto[0], &fAccelBruto[1], &fAccelBruto[2]); //Datos del acelerómetro en bruto
+        MPU6050DataGyroGetRaw(&sMPU6050, &fGyroBruto[0], &fGyroBruto[1], &fGyroBruto[2]); //Datos del gyroscopio en bruto
+        MPU6050DataAccelGetFloat(&sMPU6050, &fAccelFloat[0], &fAccelFloat[1], &fAccelFloat[2]); //Datos del acelerómetro como floats
+        MPU6050DataGyroGetFloat(&sMPU6050, &fGyroFloat[0], &fGyroFloat[1], &fGyroFloat[2]); //Datos del gyroscopio como floats
 
-       /*x = fAccel[0];
-        y = fAccel[1];
-        z = fAccel[2];*/
-        x = 778;
-        xL = x&255;
-        xH = x>>8;
-        UARTCharPut(UART0_BASE, 10);
-        UARTCharPut(UART0_BASE, 3);
-        UARTCharPut(UART0_BASE, 3);
-        UARTCharPut(UART0_BASE, xL);
-        UARTCharPut(UART0_BASE, xH);
-        //x = (atan2(fAccel[0], sqrt (fAccel[1] * fAccel[1] + fAccel[2] * fAccel[2]))*180.0)/3.14;
+        xAccel = fAccelBruto[0];
+        yAccel = fAccelBruto[1];
+        zAccel = fAccelBruto[2];
+        xGyro = fGyroBruto[0];
+        yGyro = fGyroBruto[1];
+        zGyro = fGyroBruto[2];
 
-        //y = (atan2(fAccel[1], sqrt (fAccel[0] * fAccel[0] + fAccel[2] * fAccel[2]))*180.0)/3.14;
 
-        //UARTprintf("Ang. X: %d | Ang. Y: %d | Ang. Z: %d\n", (int)x, (int)y, (int)z);
-        //UARTprintf("1");
-        //UARTprintf("Accel0: %f |Accel1: %f |Accel2: %f |Gyro0: %f |Gyro1: %f |Gyro2: %f |\n", fAccel[0], fAccel[1], fAccel[2], fGyro[0], fGyro[1], fGyro[2]);
+        xf = (atan2(fAccelFloat[0], sqrt (fAccelFloat[1] * fAccelFloat[1] + fAccelFloat[2] * fAccelFloat[2]))*180.0)/3.14;
+
+        Mdata = UARTCharGetNonBlocking(UART0_BASE);
+
+        if(Mdata==4){
+          Key(10,3);
+          sendHL((int)xf);
+          sendHL((int)xAccel);
+          sendHL((int)yAccel);
+          sendHL((int)zAccel);
+          sendHL((int)xGyro);
+          sendHL((int)yGyro);
+          sendHL((int)zGyro);
+         }
+
+          if(Mdata==2){
+              Key(2,4);
+              sendHL((int)xf);
+          }
+
+       // yf = (atan2(fAccelFloat[1], sqrt (fAccelFloat[0] * fAccelFloat[0] + fAccelFloat[2] * fAccelFloat[2]))*180.0)/3.14;
 
         /*UARTCharPut(UART0_BASE,10);
         UARTCharPut(UART0_BASE,(int)x);
@@ -385,6 +405,12 @@ void MPU6050(void)
 
         //delayMS(100);
     }
+}
+
+
+void sendHL(uint16_t val){
+    UARTCharPut(UART0_BASE,val&255);
+    UARTCharPut(UART0_BASE,val>>8);
 }
 
 void Key(uint8_t a,uint8_t b)
