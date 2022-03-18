@@ -100,14 +100,14 @@ uint16_t i=0;
 //float kI=252.40/frecuenciamuestreo;
 //float kD=0.017*frecuenciamuestreo;
 
-float Ref, u_k;
+float Ref=0, u_k=0;
 
-float e_k_1 = 0, e_k = 0, E_k = 0;
-float kP=2 , kI=1, kD=0.001 ;
+float e_k_1 = 0, e_k = 0, E_k = 0, eD = 0, wf0, wf1, wf2;
+float kP=0.8 , kI=0, kD=0 ;
 
 uint16_t u_kint;
 //float u_k;
-uint16_t xAccel = 0, yAccel = 0, zAccel = 0, xGyro = 0, yGyro = 0, zGyro = 0;
+int16_t xAccel = 0, yAccel = 0, zAccel = 0, xGyro = 0, yGyro = 0, zGyro = 0;
 float xf = 0.0;
 uint8_t Mdata = 0;
 bool send_data = 0;
@@ -129,7 +129,7 @@ int clockFreq;
 //************************************
 void sendHL(uint16_t val);
 void Key(uint8_t a,uint8_t b);
-
+float GetFloat();
 
 //*********
 // The interrupt handler for the timer interrupt.
@@ -165,18 +165,19 @@ Timer0IntHandler(void)
 
 
       e_k = Ref-xf;
-      u_k = kP*e_k + kI*E_k + kD*(e_k-e_k_1);
+      eD = e_k-e_k_1;
+      u_k = kP*e_k + kI*E_k/1000 + kD*eD*1000;
       E_k = E_k + e_k;
       e_k_1 = e_k;
 
-      u_k=u_k*(4095.0/3.3);
 
-      if (u_k> 4095) // Se acota la salida para que se encuentre entre 0-4095
-         u_k = 4095;
-      else if (u_k < 0)
-          u_k = 0;
+      if (u_k> 6) // Se acota la salida para que se encuentre entre -6 y 6
+         u_k = 6;
+      else if (u_k < -6)
+          u_k = -6;
 
-      u_k = 4095;
+      u_k = u_k*4095/12+2047.5;
+
       u_kint=(uint16_t)(u_k);
 
     dato=0b0111000000000000|u_kint; // Enviamos el dato al DAC
@@ -306,7 +307,7 @@ void I2CMSimpleIntHandler(void)
 //
 void MPU6050(void)
 {
-    uint16_t fAccelBruto[3], fGyroBruto[3];
+    int16_t fAccelBruto[3], fGyroBruto[3];
     float fAccelFloat[3], fGyroFloat[3];
     tMPU6050 sMPU6050;
 
@@ -375,7 +376,9 @@ void MPU6050(void)
         yGyro = fGyroBruto[1];
         zGyro = fGyroBruto[2];
 
-
+        wf0 = fGyroFloat[0];
+        wf1 = fGyroFloat[1];
+        wf2 = fGyroFloat[2];
         xf = (atan2(fAccelFloat[0], sqrt (fAccelFloat[1] * fAccelFloat[1] + fAccelFloat[2] * fAccelFloat[2]))*180.0)/3.14;
 
         Mdata = UARTCharGetNonBlocking(UART0_BASE);
@@ -383,18 +386,28 @@ void MPU6050(void)
         if(Mdata==4){
           Key(10,3);
           sendHL((int)xf);
-          sendHL((int)xAccel);
-          sendHL((int)yAccel);
-          sendHL((int)zAccel);
-          sendHL((int)xGyro);
-          sendHL((int)yGyro);
-          sendHL((int)zGyro);
+          sendHL(xAccel);
+          sendHL(yAccel);
+          sendHL(zAccel);
+          sendHL(xGyro);
+          sendHL(yGyro);
+          sendHL(zGyro);
          }
 
-          if(Mdata==2){
+        else if(Mdata==2){
               Key(2,4);
               sendHL((int)xf);
           }
+        else if(Mdata==12){
+            kP = GetFloat();
+        }
+        else if(Mdata==13){
+                    kI = GetFloat();
+                }
+        else if(Mdata==14){
+                    kD = GetFloat();
+                }
+
 
        // yf = (atan2(fAccelFloat[1], sqrt (fAccelFloat[0] * fAccelFloat[0] + fAccelFloat[2] * fAccelFloat[2]))*180.0)/3.14;
 
@@ -407,6 +420,19 @@ void MPU6050(void)
     }
 }
 
+float GetFloat(){
+    uint16_t MSB, LSB, entero, decimal;
+    float p, value;
+    LSB = UARTCharGet(UART0_BASE);
+    MSB = UARTCharGet(UART0_BASE);
+    entero = (MSB<<8)+LSB;
+    LSB = UARTCharGet(UART0_BASE);
+    MSB = UARTCharGet(UART0_BASE);
+    decimal = (MSB<<8)+LSB;
+    value = (float)entero + ((float)decimal)/10000;
+    p = (float)UARTCharGet(UART0_BASE);
+    return value/pow(10,p);
+}
 
 void sendHL(uint16_t val){
     UARTCharPut(UART0_BASE,val&255);
